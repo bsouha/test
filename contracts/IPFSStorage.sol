@@ -1,47 +1,80 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.24;
 
-contract IPFSStorage {
-    // Mapping from case ID to IPFS hash
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract IPFSStorage is Ownable {
     mapping(uint256 => string) private _caseDataHashes;
-
-    // Mapping from expert opinion ID to IPFS hash
     mapping(uint256 => string) private _opinionHashes;
 
-    // Event emitted when data is stored
-    event DataStored(uint256 indexed id, string ipfsHash, string dataType);
+    address public medicalCaseContract;
+    address public expertOpinionContract;
 
-    /**
-     * @dev Store a case's data on IPFS via its hash
-     * @param caseId The ID of the medical case
-     * @param ipfsHash The IPFS CID where the data is stored
-     */
-    function storeCaseData(uint256 caseId, string memory ipfsHash) external {
+    event CaseDataStored(uint256 indexed caseId, string ipfsHash);
+    event OpinionStored(uint256 indexed opinionId, string ipfsHash);
+
+    modifier onlyAuthorized() {
+        require(
+            msg.sender == medicalCaseContract || msg.sender == expertOpinionContract,
+            "Not authorized"
+        );
+        _;
+    }
+
+    constructor() Ownable(msg.sender) {}
+
+    function setAuthorizedContracts(address _medicalCase, address _expertOpinion) external onlyOwner {
+        medicalCaseContract = _medicalCase;
+        expertOpinionContract = _expertOpinion;
+    }
+
+    function storeCaseData(uint256 caseId, string memory ipfsHash) external onlyAuthorized {
+        require(bytes(_caseDataHashes[caseId]).length == 0, "Case data already exists");
         _caseDataHashes[caseId] = ipfsHash;
-        emit DataStored(caseId, ipfsHash, "CaseData");
+        emit CaseDataStored(caseId, ipfsHash);
     }
 
-    /**
-     * @dev Store an expert's opinion on IPFS via its hash
-     * @param opinionId A unique identifier for the expert opinion
-     * @param ipfsHash The IPFS CID where the data is stored
-     */
-    function storeOpinion(uint256 opinionId, string memory ipfsHash) external {
+    function storeOpinion(uint256 opinionId, string memory ipfsHash) external onlyAuthorized {
+        require(bytes(_opinionHashes[opinionId]).length == 0, "Opinion already exists");
         _opinionHashes[opinionId] = ipfsHash;
-        emit DataStored(opinionId, ipfsHash, "Opinion");
+        emit OpinionStored(opinionId, ipfsHash);
     }
 
-    /**
-     * @dev Retrieve the IPFS hash for a medical case
-     */
+    function updateCaseData(uint256 caseId, string memory newIpfsHash) external onlyAuthorized {
+        require(bytes(_caseDataHashes[caseId]).length != 0, "No existing case data");
+        _caseDataHashes[caseId] = newIpfsHash;
+        emit CaseDataStored(caseId, newIpfsHash);
+    }
+
+    function updateOpinion(uint256 opinionId, string memory newIpfsHash) external onlyAuthorized {
+        require(bytes(_opinionHashes[opinionId]).length != 0, "No existing opinion");
+        _opinionHashes[opinionId] = newIpfsHash;
+        emit OpinionStored(opinionId, newIpfsHash);
+    }
+
     function getCaseDataHash(uint256 caseId) external view returns (string memory) {
         return _caseDataHashes[caseId];
     }
 
-    /**
-     * @dev Retrieve the IPFS hash for an expert opinion
-     */
     function getOpinionHash(uint256 opinionId) external view returns (string memory) {
         return _opinionHashes[opinionId];
+    }
+
+    function storeBatchCases(uint256[] calldata caseIds, string[] calldata ipfsHashes) external onlyAuthorized {
+        require(caseIds.length == ipfsHashes.length, "Length mismatch");
+        for (uint256 i = 0; i < caseIds.length; i++) {
+            require(bytes(_caseDataHashes[caseIds[i]]).length == 0, "Case already exists");
+            _caseDataHashes[caseIds[i]] = ipfsHashes[i];
+            emit CaseDataStored(caseIds[i], ipfsHashes[i]);
+        }
+    }
+
+    function storeBatchOpinions(uint256[] calldata opinionIds, string[] calldata ipfsHashes) external onlyAuthorized {
+        require(opinionIds.length == ipfsHashes.length, "Length mismatch");
+        for (uint256 i = 0; i < opinionIds.length; i++) {
+            require(bytes(_opinionHashes[opinionIds[i]]).length == 0, "Opinion already exists");
+            _opinionHashes[opinionIds[i]] = ipfsHashes[i];
+            emit OpinionStored(opinionIds[i], ipfsHashes[i]);
+        }
     }
 }

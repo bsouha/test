@@ -17,6 +17,7 @@
     "mocha": "^11.3.0"
   },
   "dependencies": {
+    "circomlib": "^2.0.5",
     "ethers": "^6.14.1",
     "hardhat-circom": "^3.3.2"
   }

@@ -1,13 +1,11 @@
-// contracts/MedicalCase.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "./AccessControl.sol";
 
 contract MedicalCase is Ownable {
-    using EnumerableSet for EnumerableSet.AddressSet;
-
+    // ========== STRUCTURES ==========
     struct Case {
         uint caseId;
         string ipfsHash;
@@ -19,12 +17,15 @@ contract MedicalCase is Ownable {
         uint[] expertIds;
     }
 
+    // ========== STATE VARIABLES ==========
     Case[] public cases;
     uint public caseCount;
     mapping(uint => Case) public caseById;
+    mapping(uint => address) public caseToPatient;
 
-    EnumerableSet.AddressSet private _physicians;
+    AccessControl private accessControl;
 
+    // ========== EVENTS ==========
     event CaseSubmitted(
         uint indexed caseId,
         address indexed physician,
@@ -34,33 +35,40 @@ contract MedicalCase is Ownable {
     );
     event ExpertAssigned(uint indexed caseId, uint indexed expertId);
     event CaseClosed(uint indexed caseId);
+    event PatientConsentGiven(uint indexed caseId, address indexed patient);
 
+    // ========== MODIFIERS ==========
     modifier onlyPhysician() {
-        require(EnumerableSet.contains(_physicians, msg.sender), "Caller is not an authorized physician");
+        require(accessControl.isPhysician(msg.sender), "Only physicians can submit cases");
         _;
     }
 
-    constructor() Ownable(msg.sender) {}
-
-    function addPhysician(address _physician) external onlyOwner {
-        _physicians.add(_physician);
+    modifier validCaseId(uint _caseId) {
+        require(_caseId > 0 && _caseId <= caseCount, "Invalid case ID");
+        _;
     }
 
-    function removePhysician(address _physician) external onlyOwner {
-        _physicians.remove(_physician);
+    // ========== CONSTRUCTOR ==========
+    constructor() Ownable(msg.sender) {}
+
+    // ========== EXTERNAL FUNCTIONS ==========
+    function setAccessControlAddress(address _addr) external onlyOwner {
+        accessControl = AccessControl(_addr);
     }
 
     function submitCase(
         string memory _ipfsHash,
         string memory _category,
         uint _durationDays
-    ) external onlyPhysician {
+    ) public onlyPhysician {
         require(bytes(_ipfsHash).length > 0, "IPFS hash cannot be empty");
         require(bytes(_category).length > 0, "Category cannot be empty");
         require(_durationDays > 0 && _durationDays <= 30, "Invalid duration");
 
         caseCount++;
         uint expiry = block.timestamp + (_durationDays * 1 days);
+
+        uint[] memory emptyExperts;
 
         Case memory newCase = Case({
             caseId: caseCount,
@@ -70,7 +78,7 @@ contract MedicalCase is Ownable {
             category: _category,
             isOpen: true,
             timestamp: block.timestamp,
-            expertIds: new uint[](0)
+            expertIds: emptyExperts
         });
 
         cases.push(newCase);
@@ -79,17 +87,32 @@ contract MedicalCase is Ownable {
         emit CaseSubmitted(caseCount, msg.sender, _ipfsHash, _category, block.timestamp);
     }
 
-    function assignExpert(uint _caseId, uint _expertId) external onlyOwner {
-        require(_caseId > 0 && _caseId <= caseCount, "Invalid case ID");
+    function submitCaseWithPatient(
+        string memory _ipfsHash,
+        string memory _category,
+        uint _durationDays,
+        address patientAddress
+    ) external onlyPhysician {
+        require(patientAddress != address(0), "Invalid patient address");
+        submitCase(_ipfsHash, _category, _durationDays);
+        caseToPatient[caseCount] = patientAddress;
+        emit PatientConsentGiven(caseCount, patientAddress);
+    }
+
+    function assignExpert(uint _caseId, uint _expertId) external onlyOwner validCaseId(_caseId) {
         Case storage c = caseById[_caseId];
         require(c.isOpen, "Case is closed");
+
+        // Prevent duplicate expert assignment
+        for (uint i = 0; i < c.expertIds.length; i++) {
+            require(c.expertIds[i] != _expertId, "Expert already assigned");
+        }
 
         c.expertIds.push(_expertId);
         emit ExpertAssigned(_caseId, _expertId);
     }
 
-    function closeCase(uint _caseId) external onlyOwner {
-        require(_caseId > 0 && _caseId <= caseCount, "Invalid case ID");
+    function closeCase(uint _caseId) external onlyOwner validCaseId(_caseId) {
         Case storage c = caseById[_caseId];
         require(c.isOpen, "Case already closed");
 
@@ -100,6 +123,7 @@ contract MedicalCase is Ownable {
     function getCase(uint _caseId)
         external
         view
+        validCaseId(_caseId)
         returns (
             uint,
             string memory,
@@ -111,7 +135,6 @@ contract MedicalCase is Ownable {
             uint[] memory
         )
     {
-        require(_caseId > 0 && _caseId <= caseCount, "Invalid case ID");
         Case memory c = caseById[_caseId];
         return (
             c.caseId,
@@ -125,23 +148,11 @@ contract MedicalCase is Ownable {
         );
     }
 
-    function getAllPhysicians() external view returns (address[] memory) {
-        return _physicians.values();
-    }
-
-    function getActiveCaseCount() external view returns (uint) {
-        uint count = 0;
-        for (uint i = 1; i <= caseCount; i++) {
-            if (caseById[i].isOpen) count++;
-        }
-        return count;
-    }
-
     function isValidCase(uint _caseId) public view returns (bool) {
         return _caseId > 0 && _caseId <= caseCount;
     }
 
-    function getExpertCount(uint _caseId) public view returns (uint) {
-        return caseById[_caseId].expertIds.length;
+    function caseId() public view returns (uint) {
+        return caseCount;
     }
 }

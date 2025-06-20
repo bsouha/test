@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
+import "./MedicalCase.sol";
 
-contract ExpertOpinion is Ownable(msg.sender) {
-    // ================== EVENTS ======================
+contract ExpertOpinion is Ownable {
+    struct ExpertOpinionData {
+        uint256 caseId;
+        uint256 expertId;
+        string opinionHash; // IPFS CID to encrypted expert opinion
+        uint256 timestamp;
+        bool verified;
+    }
+
+    mapping(uint256 => ExpertOpinionData[]) private _caseOpinions;
+    mapping(uint256 => mapping(uint256 => bool)) private _hasOpinion;
+    mapping(uint256 => address) private _expertWallets;
+
+    MedicalCase public medicalCaseContract;
+    address public votingContract;
 
     event OpinionSubmitted(
         uint256 indexed caseId,
@@ -25,38 +38,57 @@ contract ExpertOpinion is Ownable(msg.sender) {
         uint256 indexed challengerId
     );
 
-    // ================ DATA STRUCTURES ===============
+    event ExpertWalletRegistered(
+        uint256 indexed expertId,
+        address wallet
+    );
 
-    struct ExpertOpinionData {
-        uint256 caseId;
-        uint256 expertId;
-        string opinionHash; // IPFS CID pointing to encrypted opinion
-        uint256 timestamp;
-        bool verified;
+    modifier onlyValidCase(uint256 caseId) {
+        (, , , , , bool isOpen, ,) = medicalCaseContract.getCase(caseId);
+        require(isOpen, "Case is closed");
+        _;
     }
 
-    // ================ STATE VARIABLES ===============
+    modifier onlyOwnerOrExpert(uint256 expertId) {
+        require(
+            msg.sender == owner() || msg.sender == _expertWallets[expertId],
+            "Not authorized"
+        );
+        _;
+    }
 
-    mapping(uint256 => ExpertOpinionData[]) private _caseOpinions;
-    mapping(uint256 => mapping(uint256 => bool)) private _hasOpinion;
+    modifier onlyVotingContract() {
+        require(msg.sender == votingContract, "Not authorized");
+        _;
+    }
 
-    // Optional: store expert ID -> wallet address mapping securely if needed
-    mapping(uint256 => address) private _expertWallets;
+    constructor() Ownable(msg.sender) {}
 
-    // ================ CONTRACT LOGIC ===============
+    function setMedicalCaseAddress(address _addr) external onlyOwner {
+        medicalCaseContract = MedicalCase(_addr);
+    }
 
-    /**
-     * @dev Submit an expert opinion for a given case.
-     * @param caseId The ID of the medical case from MedicalCase.sol
-     * @param expertId Pseudonymous ID assigned to expert (not wallet address)
-     * @param opinionHash IPFS hash pointing to encrypted expert opinion
-     */
+    function setVotingAddress(address _addr) external onlyOwner {
+        require(_addr != address(0), "Invalid address");
+        votingContract = _addr;
+    }
+
+    function registerExpertWallet(uint256 expertId, address wallet) external onlyOwner {
+        require(wallet != address(0), "Invalid wallet address");
+        _expertWallets[expertId] = wallet;
+        emit ExpertWalletRegistered(expertId, wallet);
+    }
+
     function submitOpinion(
         uint256 caseId,
         uint256 expertId,
         string memory opinionHash
-    ) external onlyOwnerOrExpert(expertId) {
+    ) external onlyOwnerOrExpert(expertId) onlyValidCase(caseId) {
+        require(_expertWallets[expertId] != address(0), "Unregistered expert");
         require(!_hasOpinion[caseId][expertId], "Opinion already submitted");
+
+        (, , , uint256 expiryTime, , , ,) = medicalCaseContract.getCase(caseId);
+        require(block.timestamp < expiryTime, "Case expired");
 
         ExpertOpinionData memory newOpinion = ExpertOpinionData({
             caseId: caseId,
@@ -72,22 +104,17 @@ contract ExpertOpinion is Ownable(msg.sender) {
         emit OpinionSubmitted(caseId, expertId, opinionHash, block.timestamp);
     }
 
-    /**
-     * @dev Verify the validity of an expert opinion (can be triggered by AI module).
-     * @param caseId The ID of the medical case
-     * @param expertId ID of the expert whose opinion is being verified
-     * @param isValid Whether the opinion is valid
-     */
     function verifyOpinion(
         uint256 caseId,
         uint256 expertId,
         bool isValid
-    ) external onlyOwner {
+    ) public onlyOwnerOrExpert(expertId) {
         ExpertOpinionData[] storage opinions = _caseOpinions[caseId];
         bool found = false;
 
         for (uint256 i = 0; i < opinions.length; i++) {
             if (opinions[i].expertId == expertId) {
+                require(!opinions[i].verified, "Already verified");
                 opinions[i].verified = isValid;
                 found = true;
                 break;
@@ -99,20 +126,14 @@ contract ExpertOpinion is Ownable(msg.sender) {
         emit OpinionVerified(caseId, expertId, isValid);
     }
 
-    /**
-     * @dev Allows filing a dispute against an expert opinion.
-     * @param caseId The ID of the medical case
-     * @param expertId ID of the expert whose opinion is disputed
-     */
+    function markOpinionApproved(uint256 caseId, uint256 expertId) external onlyVotingContract {
+        verifyOpinion(caseId, expertId, true);
+    }
+
     function disputeOpinion(uint256 caseId, uint256 expertId) external onlyOwner {
         emit OpinionDisputed(caseId, expertId);
     }
 
-    /**
-     * @dev Get all opinions for a given case.
-     * @param caseId The ID of the medical case
-     * @return Array of opinions
-     */
     function getOpinionsForCase(uint256 caseId)
         external
         view
@@ -121,23 +142,15 @@ contract ExpertOpinion is Ownable(msg.sender) {
         return _caseOpinions[caseId];
     }
 
-    // ================ MODIFIERS =====================
-
-    modifier onlyOwnerOrExpert(uint256 expertId) {
-        require(
-            msg.sender == owner() || msg.sender == _expertWallets[expertId],
-            "Not authorized"
-        );
-        _;
+    function hasSubmittedOpinion(uint256 caseId, uint256 expertId)
+        external
+        view
+        returns (bool)
+    {
+        return _hasOpinion[caseId][expertId];
     }
 
-    // ================ ADMIN FUNCTIONS ==============
-
-    /**
-     * @dev Admin function to associate expert ID with wallet address
-     * This helps maintain pseudonymity while still allowing access control
-     */
-    function registerExpertWallet(uint256 expertId, address wallet) external onlyOwner {
-        _expertWallets[expertId] = wallet;
+    function getExpertWallet(uint256 expertId) external view returns (address) {
+        return _expertWallets[expertId];
     }
 }

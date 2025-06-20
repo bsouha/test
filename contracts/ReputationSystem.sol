@@ -1,65 +1,81 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract ReputationSystem is Ownable(msg.sender) {
-    // Mapping from expert ID to reputation score
-    mapping(uint256 => uint256) private _reputationScores;
+contract ReputationSystem is Ownable {
+    mapping(uint256 => uint256) private reputationScores;
+    mapping(uint256 => bool) private expertExists;
+    mapping(string => uint256) public categoryThresholds;
 
-    // Minimum and maximum reputation scores
     uint256 public constant MIN_REPUTATION = 0;
     uint256 public constant MAX_REPUTATION = 1000;
 
-    // Events
+    event ReputationInitialized(uint256 indexed expertId, uint256 initialScore);
     event ReputationUpdated(uint256 indexed expertId, uint256 newScore);
     event ExpertPenalized(uint256 indexed expertId, uint256 penaltyAmount);
     event ExpertRewarded(uint256 indexed expertId, uint256 rewardAmount);
+    event CategoryThresholdSet(string category, uint256 threshold);
 
-    /**
-     * @dev Initialize reputation for a new expert
-     * @param expertId Unique pseudonymous ID of the expert
-     * @param initialScore Initial reputation score (should be between 0 and 1000)
-     */
+    constructor() Ownable(msg.sender) {}
+
+    // ================== ADMIN FUNCTIONS ==================
+
     function initializeExpert(uint256 expertId, uint256 initialScore) external onlyOwner {
+        require(!expertExists[expertId], "Expert already initialized");
         require(initialScore <= MAX_REPUTATION, "Initial score too high");
-        _reputationScores[expertId] = initialScore;
-        emit ReputationUpdated(expertId, initialScore);
+
+        reputationScores[expertId] = initialScore;
+        expertExists[expertId] = true;
+
+        emit ReputationInitialized(expertId, initialScore);
     }
 
-    /**
-     * @dev Update an expert's reputation score based on opinion quality
-     * @param expertId ID of the expert
-     * @param delta Change in reputation (positive or negative)
-     */
     function updateReputation(uint256 expertId, int256 delta) external onlyOwner {
-        uint256 currentScore = _reputationScores[expertId];
+        require(expertExists[expertId], "Expert not initialized");
+
+        uint256 current = reputationScores[expertId];
+        uint256 updated;
 
         if (delta > 0) {
-            uint256 newScore = currentScore + uint256(delta);
-            _reputationScores[expertId] = newScore > MAX_REPUTATION ? MAX_REPUTATION : newScore;
+            unchecked {
+                updated = current + uint256(delta);
+            }
+            if (updated > MAX_REPUTATION) {
+                updated = MAX_REPUTATION;
+            }
             emit ExpertRewarded(expertId, uint256(delta));
         } else if (delta < 0) {
             uint256 deduction = uint256(-delta);
-            uint256 newScore = currentScore > deduction ? currentScore - deduction : 0;
-            _reputationScores[expertId] = newScore;
+            updated = current > deduction ? current - deduction : MIN_REPUTATION;
             emit ExpertPenalized(expertId, deduction);
+        } else {
+            updated = current;
         }
 
-        emit ReputationUpdated(expertId, _reputationScores[expertId]);
+        reputationScores[expertId] = updated;
+        emit ReputationUpdated(expertId, updated);
     }
 
-    /**
-     * @dev Get the current reputation score of an expert
-     */
+    function setCategoryThreshold(string memory category, uint256 threshold) external onlyOwner {
+        require(threshold <= MAX_REPUTATION, "Threshold too high");
+        categoryThresholds[category] = threshold;
+        emit CategoryThresholdSet(category, threshold);
+    }
+
+    // ================== VIEW FUNCTIONS ==================
+
     function getReputation(uint256 expertId) external view returns (uint256) {
-        return _reputationScores[expertId];
+        require(expertExists[expertId], "Expert not initialized");
+        return reputationScores[expertId];
     }
 
-    /**
-     * @dev Check if an expert meets the minimum reputation threshold
-     */
-    function isEligible(uint256 expertId, uint256 minThreshold) external view returns (bool) {
-        return _reputationScores[expertId] >= minThreshold;
+    function isEligibleForCategory(uint256 expertId, string memory category) external view returns (bool) {
+        require(expertExists[expertId], "Expert not initialized");
+        return reputationScores[expertId] >= categoryThresholds[category];
+    }
+
+    function isExpertInitialized(uint256 expertId) external view returns (bool) {
+        return expertExists[expertId];
     }
 }
