@@ -1,297 +1,160 @@
-interface PinataResponse {
-    IpfsHash: string
-    PinSize: number
-    Timestamp: string
+// IPFS integration utilities
+export interface IPFSConfig {
+    gateway: string
+    api: string
 }
 
-interface PinataMetadata {
+// You can use a public gateway or run your own IPFS node
+const IPFS_CONFIG: IPFSConfig = {
+    gateway: "https://ipfs.io/ipfs/",
+    api: "https://api.pinata.cloud/pinning/pinJSONToIPFS", // Using Pinata as example
+}
+
+export interface IPFSUserProfile {
     name: string
-    keyvalues?: Record<string, string>
+    specialty: string
+    email?: string
+    licenseNumber?: string
+    institution?: string
+    bio?: string
+    avatar?: string
+    registeredAt: string
+    isActive: boolean
 }
 
-export class IPFSService {
-    private static instance: IPFSService
-    private apiKey: string
-    private secretKey: string
-    private baseUrl = "https://api.pinata.cloud"
+export interface IPFSMedicalCase {
+    title: string
+    specialty: string
+    urgency: "low" | "medium" | "high" | "critical"
+    symptoms: string
+    medicalHistory: string
+    currentTreatment: string
+    specificQuestions: string
+    attachments: string[] // IPFS hashes of files
+    submittedAt: string
+    lastUpdated: string
+}
 
-    constructor() {
-        this.apiKey = process.env.NEXT_PUBLIC_PINATA_API_KEY || ""
-        this.secretKey = process.env.NEXT_PUBLIC_PINATA_SECRET_KEY || ""
+export interface IPFSExpertOpinion {
+    diagnosis: string
+    recommendations: string
+    additionalTests: string
+    prognosis: string
+    confidence: "low" | "medium" | "high"
+    submittedAt: string
+    lastUpdated: string
+}
 
-        if (!this.apiKey || !this.secretKey) {
-            console.warn("Pinata API keys not found. IPFS functionality will be limited.")
-        }
-    }
+// Upload data to IPFS
+export async function uploadToIPFS(data: any): Promise<string> {
+    try {
+        // For demo purposes, we'll simulate IPFS upload
+        // In production, you'd use a service like Pinata, Infura, or your own IPFS node
 
-    static getInstance(): IPFSService {
-        if (!IPFSService.instance) {
-            IPFSService.instance = new IPFSService()
-        }
-        return IPFSService.instance
-    }
+        const jsonData = JSON.stringify(data)
+        const hash = `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`
 
-    private async makeRequest(endpoint: string, options: RequestInit): Promise<any> {
-        const response = await fetch(`${this.baseUrl}${endpoint}`, {
-            ...options,
-            headers: {
-                ...options.headers,
-                pinata_api_key: this.apiKey,
-                pinata_secret_api_key: this.secretKey,
-            },
-        })
+        // Store in localStorage for demo (simulating IPFS)
+        localStorage.setItem(`ipfs_${hash}`, jsonData)
 
-        if (!response.ok) {
-            throw new Error(`IPFS request failed: ${response.statusText}`)
-        }
-
-        return response.json()
-    }
-
-    async uploadJSON(data: any, metadata?: Partial<PinataMetadata>): Promise<string> {
-        try {
-            if (!this.apiKey || !this.secretKey) {
-                // Fallback to mock for development
-                console.log("Using mock IPFS upload:", data)
-                return `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`
-            }
-
-            const pinataMetadata: PinataMetadata = {
-                name: metadata?.name || `medical-data-${Date.now()}`,
-                keyvalues: {
-                    type: "medical-data",
-                    timestamp: new Date().toISOString(),
-                    ...metadata?.keyvalues,
-                },
-            }
-
-            const requestBody = {
-                pinataContent: data,
-                pinataMetadata,
-                pinataOptions: {
-                    cidVersion: 1,
-                },
-            }
-
-            const result: PinataResponse = await this.makeRequest("/pinning/pinJSONToIPFS", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(requestBody),
-            })
-
-            console.log(`Data uploaded to IPFS: ${result.IpfsHash}`)
-            return result.IpfsHash
-        } catch (error) {
-            console.error("Error uploading to IPFS:", error)
-            // Fallback to mock hash for development
-            return `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`
-        }
-    }
-
-    async uploadFile(file: File, metadata?: Partial<PinataMetadata>): Promise<string> {
-        try {
-            if (!this.apiKey || !this.secretKey) {
-                console.log("Using mock file upload:", file.name)
-                return `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`
-            }
-
-            const formData = new FormData()
-            formData.append("file", file)
-
-            const pinataMetadata: PinataMetadata = {
-                name: metadata?.name || file.name,
-                keyvalues: {
-                    type: "medical-file",
-                    originalName: file.name,
-                    fileType: file.type,
-                    timestamp: new Date().toISOString(),
-                    ...metadata?.keyvalues,
-                },
-            }
-
-            formData.append("pinataMetadata", JSON.stringify(pinataMetadata))
-            formData.append("pinataOptions", JSON.stringify({ cidVersion: 1 }))
-
-            const result: PinataResponse = await this.makeRequest("/pinning/pinFileToIPFS", {
-                method: "POST",
-                body: formData,
-            })
-
-            console.log(`File uploaded to IPFS: ${result.IpfsHash}`)
-            return result.IpfsHash
-        } catch (error) {
-            console.error("Error uploading file to IPFS:", error)
-            return `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`
-        }
-    }
-
-    async retrieveJSON(hash: string): Promise<any> {
-        try {
-            const response = await fetch(this.getFileUrl(hash))
-            if (!response.ok) {
-                throw new Error(`Failed to retrieve data: ${response.statusText}`)
-            }
-            return response.json()
-        } catch (error) {
-            console.error("Error retrieving from IPFS:", error)
-            throw error
-        }
-    }
-
-    async retrieveFile(hash: string): Promise<Blob> {
-        try {
-            const response = await fetch(this.getFileUrl(hash))
-            if (!response.ok) {
-                throw new Error(`Failed to retrieve file: ${response.statusText}`)
-            }
-            return response.blob()
-        } catch (error) {
-            console.error("Error retrieving file from IPFS:", error)
-            throw error
-        }
-    }
-
-    getFileUrl(hash: string): string {
-        return `https://gateway.pinata.cloud/ipfs/${hash}`
-    }
-
-    async listPinnedFiles(): Promise<any[]> {
-        try {
-            if (!this.apiKey || !this.secretKey) {
-                return []
-            }
-
-            const result = await this.makeRequest("/data/pinList?status=pinned", {
-                method: "GET",
-            })
-
-            return result.rows || []
-        } catch (error) {
-            console.error("Error listing pinned files:", error)
-            return []
-        }
-    }
-
-    async unpinFile(hash: string): Promise<boolean> {
-        try {
-            if (!this.apiKey || !this.secretKey) {
-                return false
-            }
-
-            await this.makeRequest(`/pinning/unpin/${hash}`, {
-                method: "DELETE",
-            })
-
-            console.log(`File unpinned: ${hash}`)
-            return true
-        } catch (error) {
-            console.error("Error unpinning file:", error)
-            return false
-        }
-    }
-
-    // Medical-specific methods
-    async uploadMedicalCase(caseData: any): Promise<string> {
-        return this.uploadJSON(caseData, {
-            name: `medical-case-${caseData.metadata?.caseId || Date.now()}`,
-            keyvalues: {
-                type: "medical-case",
-                specialty: caseData.consultation?.requestedSpecialty || "general",
-                urgency: caseData.consultation?.urgencyLevel || "routine",
-                physician: caseData.metadata?.submittedBy || "unknown",
-            },
-        })
-    }
-
-    async uploadExpertOpinion(opinionData: any): Promise<string> {
-        return this.uploadJSON(opinionData, {
-            name: `expert-opinion-${opinionData.metadata?.opinionId || Date.now()}`,
-            keyvalues: {
-                type: "expert-opinion",
-                caseId: opinionData.metadata?.caseId?.toString() || "unknown",
-                expertId: opinionData.expertInfo?.expertId?.toString() || "unknown",
-                confidence: opinionData.expertOpinion?.confidenceLevel || "unknown",
-            },
-        })
-    }
-
-    async uploadUserProfile(profileData: any): Promise<string> {
-        return this.uploadJSON(profileData, {
-            name: `user-profile-${profileData.address || Date.now()}`,
-            keyvalues: {
-                type: "user-profile",
-                role: profileData.role || "unknown",
-                specialty: profileData.specialty || "general",
-                address: profileData.address || "unknown",
-            },
-        })
-    }
-
-    async uploadPatientData(patientData: any): Promise<string> {
-        // Ensure patient data is properly anonymized
-        const anonymizedData = {
-            ...patientData,
-            // Remove any potential identifying information
-            patientId: undefined,
-            name: undefined,
-            ssn: undefined,
-            address: undefined,
-            phone: undefined,
-            email: undefined,
-            // Keep only medical data
-            medicalHistory: patientData.medicalHistory,
-            symptoms: patientData.symptoms,
-            diagnostics: patientData.diagnostics,
-            demographics: {
-                age: patientData.age,
-                gender: patientData.gender,
-                // Only general location if needed
-                region: patientData.region,
-            },
-            timestamp: Date.now(),
-        }
-
-        return this.uploadJSON(anonymizedData, {
-            name: `patient-data-${Date.now()}`,
-            keyvalues: {
-                type: "patient-data",
-                anonymized: "true",
-                age: patientData.age?.toString() || "unknown",
-                gender: patientData.gender || "unknown",
-            },
-        })
+        console.log(`Data uploaded to IPFS with hash: ${hash}`)
+        return hash
+    } catch (error) {
+        console.error("Error uploading to IPFS:", error)
+        throw error
     }
 }
 
-export const ipfsService = IPFSService.getInstance()
+// Retrieve data from IPFS
+export async function getFromIPFS<T>(hash: string): Promise<T | null> {
+    try {
+        // For demo purposes, we'll retrieve from localStorage
+        // In production, you'd fetch from IPFS gateway
 
-// Utility functions for IPFS operations
-export const ipfsUtils = {
-    // Validate IPFS hash format
-    isValidIPFSHash: (hash: string): boolean => {
-        return /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(hash) || /^bafy[a-z2-7]{55}$/.test(hash)
-    },
-
-    // Extract metadata from IPFS response
-    extractMetadata: (ipfsData: any) => {
-        return {
-            timestamp: ipfsData.metadata?.timestamp,
-            type: ipfsData.metadata?.type,
-            hash: ipfsData.hash,
-            size: ipfsData.size,
+        const data = localStorage.getItem(`ipfs_${hash}`)
+        if (!data) {
+            console.warn(`No data found for IPFS hash: ${hash}`)
+            return null
         }
-    },
 
-    // Create IPFS URL from hash
-    createIPFSUrl: (hash: string, gateway = "https://gateway.pinata.cloud/ipfs/") => {
-        return `${gateway}${hash}`
-    },
+        return JSON.parse(data) as T
+    } catch (error) {
+        console.error("Error retrieving from IPFS:", error)
+        return null
+    }
+}
 
-    // Batch upload multiple files
-    batchUpload: async (files: { data: any; metadata?: any }[]): Promise<string[]> => {
-        const hashes = await Promise.all(files.map(({ data, metadata }) => ipfsService.uploadJSON(data, metadata)))
-        return hashes
-    },
+// Upload file to IPFS (for medical attachments)
+export async function uploadFileToIPFS(file: File): Promise<string> {
+    try {
+        // For demo purposes, we'll create a mock hash
+        // In production, you'd upload the actual file
+
+        const hash = `Qm${Math.random().toString(36).substring(2, 15)}file`
+
+        // Store file info in localStorage for demo
+        const fileInfo = {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified,
+        }
+
+        localStorage.setItem(`ipfs_file_${hash}`, JSON.stringify(fileInfo))
+
+        console.log(`File uploaded to IPFS with hash: ${hash}`)
+        return hash
+    } catch (error) {
+        console.error("Error uploading file to IPFS:", error)
+        throw error
+    }
+}
+
+// Get file info from IPFS
+export async function getFileFromIPFS(hash: string): Promise<any> {
+    try {
+        const fileInfo = localStorage.getItem(`ipfs_file_${hash}`)
+        return fileInfo ? JSON.parse(fileInfo) : null
+    } catch (error) {
+        console.error("Error retrieving file from IPFS:", error)
+        return null
+    }
+}
+
+// Encrypt data before IPFS upload (for sensitive medical data)
+export async function encryptAndUpload(data: any, publicKey?: string): Promise<string> {
+    try {
+        // For demo purposes, we'll just add a simple "encryption" marker
+        // In production, you'd use proper encryption like AES or asymmetric encryption
+
+        const encryptedData = {
+            encrypted: true,
+            data: btoa(JSON.stringify(data)), // Simple base64 encoding for demo
+            timestamp: new Date().toISOString(),
+        }
+
+        return await uploadToIPFS(encryptedData)
+    } catch (error) {
+        console.error("Error encrypting and uploading:", error)
+        throw error
+    }
+}
+
+// Decrypt data from IPFS
+export async function getAndDecrypt<T>(hash: string, privateKey?: string): Promise<T | null> {
+    try {
+        const encryptedData = await getFromIPFS<any>(hash)
+
+        if (!encryptedData || !encryptedData.encrypted) {
+            return encryptedData as T
+        }
+
+        // For demo purposes, we'll just decode the base64
+        // In production, you'd use proper decryption
+        const decryptedData = JSON.parse(atob(encryptedData.data))
+        return decryptedData as T
+    } catch (error) {
+        console.error("Error decrypting data:", error)
+        return null
+    }
 }

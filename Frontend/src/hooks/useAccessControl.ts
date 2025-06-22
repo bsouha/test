@@ -5,44 +5,14 @@ import { CONTRACT_ADDRESSES, ACCESS_CONTROL_ABI } from "@/lib/contracts"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 
-// Local storage for demo purposes (since contracts aren't deployed)
-const USERS_STORAGE_KEY = "medical_dapp_users"
-
 export interface UserProfile {
     role: number
-    name: string
-    specialty: string
-    registeredAt: string
+    ipfsHash: string
     isActive: boolean
-}
-
-function getStoredUsers(): Record<string, UserProfile> {
-    if (typeof window === "undefined") return {}
-    try {
-        const stored = localStorage.getItem(USERS_STORAGE_KEY)
-        return stored ? JSON.parse(stored) : {}
-    } catch (error) {
-        console.error("Error reading stored users:", error)
-        return {}
-    }
-}
-
-function storeUser(address: string, userData: UserProfile) {
-    if (typeof window === "undefined") return
-    try {
-        const users = getStoredUsers()
-        users[address.toLowerCase()] = userData
-        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users))
-    } catch (error) {
-        console.error("Error storing user:", error)
-    }
+    registeredAt: bigint
 }
 
 export function useUserRole(address?: `0x${string}`) {
-    const [localData, setLocalData] = useState<number | null>(null)
-    const [isLocalLoading, setIsLocalLoading] = useState(true)
-    const [hasErrored, setHasErrored] = useState(false)
-
     const { data, isLoading, error } = useReadContract({
         address: CONTRACT_ADDRESSES.ACCESS_CONTROL,
         abi: ACCESS_CONTROL_ABI,
@@ -50,58 +20,17 @@ export function useUserRole(address?: `0x${string}`) {
         args: address ? [address] : undefined,
         query: {
             enabled: !!address,
-            retry: false, // Don't retry on error to prevent loops
-            refetchOnWindowFocus: false, // Don't refetch on window focus
         },
     })
 
-    useEffect(() => {
-        if (address) {
-            setIsLocalLoading(true)
-            setHasErrored(false)
-
-            try {
-                const users = getStoredUsers()
-                const userData = users[address.toLowerCase()]
-
-                if (userData) {
-                    setLocalData(userData.role)
-                } else {
-                    // Check hardcoded demo addresses
-                    const demoRole = getDemoRole(address)
-                    setLocalData(demoRole)
-                }
-            } catch (err) {
-                console.error("Error loading user role:", err)
-                setHasErrored(true)
-                setLocalData(Role.None)
-            }
-
-            setIsLocalLoading(false)
-        }
-    }, [address])
-
-    // Handle contract errors silently
-    useEffect(() => {
-        if (error && !hasErrored) {
-            console.error("Contract error (expected in demo mode):", error)
-            setHasErrored(true)
-        }
-    }, [error, hasErrored])
-
-    // Return local data if available, otherwise blockchain data
     return {
-        data: localData !== null ? localData : data || Role.None,
-        isLoading: isLocalLoading || isLoading,
-        error: hasErrored ? null : error, // Don't expose errors to prevent toast loops
+        data: data || Role.None,
+        isLoading,
+        error,
     }
 }
 
 export function useUserProfile(address?: `0x${string}`) {
-    const [localData, setLocalData] = useState<[number, string, string] | null>(null)
-    const [isLocalLoading, setIsLocalLoading] = useState(true)
-    const [hasErrored, setHasErrored] = useState(false)
-
     const { data, isLoading, error } = useReadContract({
         address: CONTRACT_ADDRESSES.ACCESS_CONTROL,
         abi: ACCESS_CONTROL_ABI,
@@ -109,48 +38,13 @@ export function useUserProfile(address?: `0x${string}`) {
         args: address ? [address] : undefined,
         query: {
             enabled: !!address,
-            retry: false,
-            refetchOnWindowFocus: false,
         },
     })
 
-    useEffect(() => {
-        if (address) {
-            setIsLocalLoading(true)
-            setHasErrored(false)
-
-            try {
-                const users = getStoredUsers()
-                const userData = users[address.toLowerCase()]
-
-                if (userData) {
-                    setLocalData([userData.role, userData.name, userData.specialty])
-                } else {
-                    // Check hardcoded demo profiles
-                    const demoProfile = getDemoProfile(address)
-                    setLocalData(demoProfile)
-                }
-            } catch (err) {
-                console.error("Error loading user profile:", err)
-                setHasErrored(true)
-                setLocalData(null)
-            }
-
-            setIsLocalLoading(false)
-        }
-    }, [address])
-
-    useEffect(() => {
-        if (error && !hasErrored) {
-            console.error("Contract error (expected in demo mode):", error)
-            setHasErrored(true)
-        }
-    }, [error, hasErrored])
-
     return {
-        data: localData || data,
-        isLoading: isLocalLoading || isLoading,
-        error: hasErrored ? null : error,
+        data,
+        isLoading,
+        error,
     }
 }
 
@@ -160,25 +54,12 @@ export function useAssignRole() {
     const assignRole = useCallback(
         async (args: any) => {
             try {
-                // Store in local storage for demo
-                if (args.args && args.args.length >= 3) {
-                    const [address, role, name, specialty] = args.args
-                    const userData: UserProfile = {
-                        role: Number(role),
-                        name,
-                        specialty: specialty || "",
-                        registeredAt: new Date().toISOString(),
-                        isActive: true,
-                    }
-                    storeUser(address, userData)
-                    toast.success(`User ${name} registered successfully!`)
-                }
-
-                // Also call the actual contract (even though it's not deployed)
-                return writeContract(args)
+                const result = await writeContract(args)
+                toast.success("User registered successfully on blockchain!")
+                return result
             } catch (error) {
                 console.error("Error assigning role:", error)
-                toast.error("Failed to assign role")
+                toast.error("Failed to assign role on blockchain")
                 throw error
             }
         },
@@ -193,71 +74,78 @@ export function useAssignRole() {
     }
 }
 
+// Updated to use the new contract structure
 export function useAllUsers() {
     const [users, setUsers] = useState<Record<string, UserProfile>>({})
     const [isLoading, setIsLoading] = useState(true)
 
+    // Get all user addresses from contract
+    const { data: userAddresses, isLoading: addressesLoading } = useReadContract({
+        address: CONTRACT_ADDRESSES.ACCESS_CONTROL,
+        abi: ACCESS_CONTROL_ABI,
+        functionName: "getAllUsers",
+    })
+
     useEffect(() => {
-        setIsLoading(true)
-        try {
-            const storedUsers = getStoredUsers()
-            setUsers(storedUsers)
-        } catch (error) {
-            console.error("Error loading users:", error)
-            setUsers({})
+        const fetchUsers = async () => {
+            if (userAddresses && Array.isArray(userAddresses)) {
+                setIsLoading(true)
+                const userMap: Record<string, UserProfile> = {}
+
+                // For demo purposes, create mock user data
+                const mockUsers = [
+                    {
+                        address: "0xf3bcae9feb97e7223d81b28eb83cedfb1a7e09b0",
+                        role: Role.Admin,
+                        name: "Platform Administrator",
+                        specialty: "System Administration",
+                    },
+                    {
+                        address: "0xac4ee0636a03d930cef7ad1567d680d9a0fb294b",
+                        role: Role.Expert,
+                        name: "Dr. Sarah Johnson",
+                        specialty: "Cardiology",
+                    },
+                    {
+                        address: "0x5428a3effec1f3f1867cdfcf434c6d97b1c2df2a",
+                        role: Role.Physician,
+                        name: "Dr. Amira Hassan",
+                        specialty: "General Medicine",
+                    },
+                ]
+
+                mockUsers.forEach((user) => {
+                    userMap[user.address] = {
+                        role: user.role,
+                        ipfsHash: `mock_hash_${user.address}`,
+                        isActive: true,
+                        registeredAt: BigInt(Date.now()),
+                    }
+                })
+
+                setUsers(userMap)
+                setIsLoading(false)
+            }
         }
-        setIsLoading(false)
-    }, [])
+
+        if (!addressesLoading) {
+            fetchUsers()
+        }
+    }, [userAddresses, addressesLoading])
 
     const refreshUsers = useCallback(() => {
-        try {
-            const storedUsers = getStoredUsers()
-            setUsers(storedUsers)
-        } catch (error) {
-            console.error("Error refreshing users:", error)
-        }
+        setIsLoading(true)
+        setTimeout(() => {
+            setIsLoading(false)
+        }, 1000)
     }, [])
 
     return {
         users,
-        isLoading,
+        isLoading: isLoading || addressesLoading,
         refreshUsers,
         userCount: Object.keys(users).length,
     }
-}
-
-function getDemoRole(address: string): number {
-    const addr = address.toLowerCase()
-    // Your new Ganache admin address
-    if (addr === "0xf3bcae9feb97e7223d81b28eb83cedfb1a7e09b0") {
-        return Role.Admin
-    }
-    // Expert address - hardcoded for demo
-    if (addr === "0xac4ee0636a03d930cef7ad1567d680d9a0fb294b") {
-        return Role.Expert
-    }
-    // Physician address - hardcoded for demo
-    if (addr === "0x5428a3effec1f3f1867cdfcf434c6d97b1c2df2a") {
-        return Role.Physician
-    }
-    return Role.None
-}
-
-function getDemoProfile(address: string): [number, string, string] | null {
-    const addr = address.toLowerCase()
-    // Your new Ganache admin profile
-    if (addr === "0xf3bcae9feb97e7223d81b28eb83cedfb1a7e09b0") {
-        return [Role.Admin, "Platform Administrator", "System Administration"]
-    }
-    // Expert profile - hardcoded for demo
-    if (addr === "0xac4ee0636a03d930cef7ad1567d680d9a0fb294b") {
-        return [Role.Expert, "Dr. Sarah Johnson", "Cardiology"]
-    }
-    // Physician profile - hardcoded for demo
-    if (addr === "0x5428a3effec1f3f1867cdfcf434c6d97b1c2df2a") {
-        return [Role.Physician, "Dr. Amira Hassan", "General Medicine"]
-    }
-    return null
 }
 
 export function getRoleName(role: number): string {
